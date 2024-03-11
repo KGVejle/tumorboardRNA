@@ -185,7 +185,7 @@ if (params.fastq) {
 }
 
 if (!params.fastq) {
-    params.reads="${data_archive}/{lnx01,kga01_novaRuns,tank_kga_external_archive}/**/*{.,-}{RV1}{.,-}*R{1,2}*{fq,fastq}.gz"
+    params.reads="${data_archive}/{lnx01,kga01_novaRuns,tank_kga_external_archive,lnx02}/**/*{.,-}{RV1}{.,-}*R{1,2}*{fq,fastq}.gz"
 
     channel.fromFilePairs(params.reads, checkIfExists: true)
         .ifEmpty { error "Cannot find any reads matching: ${params.reads}" }
