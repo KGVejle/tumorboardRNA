@@ -19,18 +19,21 @@ params.help                             =false
 params.data                             =null
 params.fastq                            =null
 params.primary                          =null
+
 params.skipExpression                   =null
 params.keepwork                         =null
 params.nomail                           =null
+
 // skip or include individual analysis - unset parameters:
 params.dupradar                         =null   // not run by default
+params.qualimap                         =null   // not run by default
 params.skipVariants                     =null
 params.skipTrim                         =null
 params.skipQC                           =null
-params.qualimap                         =null   // not run by default
-
-
-
+// sub-workflow deselect:
+params.skipAltSplicing                  =null
+params.skipFusion                       =null
+params.skipExpression                   =null
 // Assembly-independent variables:
 
 //inhouse_genelist="/data/shared/genomes/databases/genelists/tumortarget/tumortarget.inhouse.v2.127genes.txt"
@@ -38,11 +41,35 @@ params.qualimap                         =null   // not run by default
 inhouse_genelist="/data/shared/genomes/databases/genelists/tumortarget/240123.inhouse.MOMA.Fusion.241genes.for.grep.txt"
 
 multiqc_config="/data/shared/programmer/configfiles/multiqc_config.yaml"
+switch (params.gatk) {
+
+    case 'danak':
+    gatk_image="gatk419.sif";
+    break;
+    case 'new':
+    gatk_image="gatk4400.sif";
+    break;
+    default:
+    gatk_image="gatk4500.sif";
+    break;
+}
 
 
 switch (params.server) {
+    case 'lnx02':
+        s_bind="/data/:/data/,/lnx01_data2/:/lnx01_data2/,/fast/:/fast/,/lnx01_data3/:/lnx01_data3/";
+        simgpath="/data/shared/programmer/simg";
+        params.intervals_list="/data/shared/genomes/hg38/interval.files/WGS_splitIntervals/wgs_splitinterval_BWI_subdivision3/*.interval_list";
+        tmpDIR="/fast/TMP/TMP.${user}/";
+        gatk_exec="singularity run -B ${s_bind} ${simgpath}/${gatk_image} gatk";
+        multiqc_config="/data/shared/programmer/configfiles/multiqc_config.yaml"
+        tank_storage="/home/mmaj/tank.kga/data/data.storage.archive/";
+        data_archive="/lnx01_data2/shared/dataArchive/";
+        genomes_dir="/fast/shared/genomes"
+        //modules_dir="/home/mmaj/scripts_lnx01/nextflow_lnx01/dsl2/modules/";
+    break;  
     case 'lnx01':
-        syspath="/data/shared";
+       // syspath="/data/shared";
         s_bind="/data/:/data/,/lnx01_data2/:/lnx01_data2/";
         simgpath="/data/shared/programmer/simg";
         params.intervals_list="/data/shared/genomes/hg38/interval.files/wgs_splitinterval_BWI_subdivision3_GATK_callable/*.interval_list";
@@ -55,7 +82,7 @@ switch (params.server) {
     break;
     case 'kga01':
         simgpath="/data/shared/programmer/simg";
-        syspath="/data/shared";
+      //  syspath="/data/shared";
         s_bind="/data/:/data/";
         tmpDIR="/data/TMP/TMP.${user}/";
         gatk_exec="singularity run -B ${s_bind} ${simgpath}/gatk4261.sif gatk";
@@ -64,7 +91,8 @@ switch (params.server) {
         modules_dir="/home/mmaj/LNX01_mmaj/scripts_lnx01/nextflow_lnx01/dsl2/modules";
     break;
 }
-
+/*
+*/
 
 def helpMessage() {
     log.info"""
@@ -94,7 +122,7 @@ def helpMessage() {
 
       --samplesheet         path to case samplesheet. Can contain multiple patients/cases (each case in a separate line). 
 
-      --server              Select which server the analysis is performed on (kga01 or lnx01)
+      --server              Select which server the analysis is performed on (lnx01 or lnx02)
                                 Default: lnx01
 
       --fastq               Path to dir with fastq files
@@ -115,8 +143,17 @@ def helpMessage() {
                                 Default: Do not run Dupradar (timeconsuming!)
 
     Analysis selection options:
+
+
+      --skipVariants        Do not call variants (HaplotypeCaller) on RNA seq data
+      --skipFusion          Do not call Fusions
+      --skipAltSplicing     Do not call alternative splicevariants (e.g. exon skipping)
+      --skipExpression      Do not analyse geneexpression (i.e. skip RSEM, HTseq and FeatureCounts)
+      
+
       --skipVariants          Do not call variants (HaplotypeCaller) on RNA seq data
       --skipFusions           Do not call Fusions
+
     """.stripIndent()
 }
 if (params.help) exit 0, helpMessage()
@@ -192,7 +229,7 @@ include { // SUB workflows:
          SUB_RNA_QC;                            // various QC tools
          SUB_RNA_EXPRESSION;                    // expresssion tools (RSEM, FeatureCounts, HTSeq)    
          SUB_RNA_ALT_SPLICING;
-         SUB_RNA_FUSION } from "${modules_dir}/tumorBoard.rna.modules.v2.nf" 
+         SUB_RNA_FUSION } from "./modules/tumorBoard.rna.modules.v2.nf" 
 
 
 workflow {
@@ -202,15 +239,19 @@ workflow {
     if (!params.skipQC) {
         SUB_RNA_QC(SUB_RNA_PREPROCESS.out.star_bam)
     }
-
-    SUB_RNA_EXPRESSION(SUB_RNA_PREPROCESS.out.star_bam,
+    if (!params.skipExpression) {
+        SUB_RNA_EXPRESSION(SUB_RNA_PREPROCESS.out.star_bam,
                        SUB_RNA_PREPROCESS.out.star_rsem_bam)
-
+    }
+    
+    if (!params.skipFusion) {
     SUB_RNA_FUSION(case_sample_reads_ch,
                    SUB_RNA_PREPROCESS.out.star_arriba_bam,
                    SUB_RNA_PREPROCESS.out.star_chimeric_junctions)
-
+    }
     // set trinity splicing input channel: tuple val(caseID), val(sampleID), path(bam),path(bai), path(junction), path(r1),path(r2),path(sj_tab):
+    
+    if (!params.skipAltSplicing) {
     SUB_RNA_PREPROCESS.out.star_bam
     .join(SUB_RNA_PREPROCESS.out.star_junctions)
     .join(trinity_splicing_readinput_ch)
@@ -218,7 +259,7 @@ workflow {
     .set{trinity_splicing_input}
  
     SUB_RNA_ALT_SPLICING(trinity_splicing_input)
-        
+    }    
         //SUB_RNA_PREPROCESS.out.star_bam.join(SUB_RNA_PREPROCESS.out.star_junctions).join(trinity_splicing_readinput_ch).join(SUB_RNA_PREPROCESS.out.star_sjtab))
 }
 
